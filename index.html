@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>:root{color-scheme:light;padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px)}body{margin:0}[hidden]{display:none!important}</style></head><body>
+<title>GPS de interiores</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600&display=swap">
+<style>
+/* Layout: una sola pantalla. Plano de obra a todo el alto, lecturas e instrumentos debajo, como un plotter de navegación. */
+:root{
+  --bg:#e6edf3; --panel:#f5f8fb; --stage:#fbfdfe; --ink:#17304d; --muted:#5a6f87; --line:#c3d0dc;
+  --trail:#d4551c; --pos:#b83a0a; --entry:#0a7a72; --ret:#7b3fc4;
+  --btn:#17304d; --on-btn:#f5f8fb;
+  --f-ui:"Barlow","Helvetica Neue",Arial,sans-serif;
+  --f-num:"Barlow Condensed","Arial Narrow",Arial,sans-serif;
+}
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+  --bg:#0c1f33; --panel:#132c47; --stage:#0f2740; --ink:#d2e4f6; --muted:#8ea8c3; --line:#28486b;
+  --trail:#ffae42; --pos:#ffd166; --entry:#5fe3cf; --ret:#e9a8ff;
+  --btn:#ffae42; --on-btn:#0c1f33; color-scheme:dark } }
+:root[data-theme="dark"]{
+  --bg:#0c1f33; --panel:#132c47; --stage:#0f2740; --ink:#d2e4f6; --muted:#8ea8c3; --line:#28486b;
+  --trail:#ffae42; --pos:#ffd166; --entry:#5fe3cf; --ret:#e9a8ff;
+  --btn:#ffae42; --on-btn:#0c1f33; color-scheme:dark }
+
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-ui);font-size:15px;overflow:hidden}
+.app{height:100%;max-width:900px;margin:0 auto;padding-inline:16px;padding-block:10px;display:flex;flex-direction:column;gap:10px;position:relative}
+header{display:flex;align-items:baseline;justify-content:space-between;gap:12px}
+h1{margin:0;white-space:nowrap;font-size:20px;font-family:var(--f-num);font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+.chip{font-family:var(--f-num);font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);border:1px solid var(--line);padding:2px 8px;border-radius:3px;white-space:nowrap}
+.chip.on{color:var(--entry);border-color:var(--entry)}
+
+.stage{flex:1;min-height:0;position:relative;background:var(--stage);border:1px solid var(--line);border-radius:4px;overflow:hidden}
+canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;display:block}
+.guide{position:absolute;left:8px;right:56px;top:8px;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:8px 10px;line-height:1.3;font-weight:500}
+.guide b{font-family:var(--f-num);font-size:17px;color:var(--trail);margin-right:6px}
+.zoom{position:absolute;right:8px;top:8px;display:flex;flex-direction:column;gap:6px}
+.zoom button{width:40px;height:40px;padding:0;font-size:20px}
+.cal{position:absolute;left:8px;right:8px;bottom:8px;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.cal label{flex:1;min-width:150px;font-weight:500}
+.cal input{width:90px}
+.toast{position:absolute;left:8px;right:8px;bottom:8px;background:var(--ink);color:var(--stage);border-radius:4px;padding:10px 12px;font-weight:500;text-align:center}
+
+.read{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.read div{min-width:0;border-top:2px solid var(--line);padding-top:4px}
+.read dt,.lbl{font-family:var(--f-num);font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+.read dd{margin:0;font-family:var(--f-num);font-weight:600;font-size:26px;line-height:1.1;font-variant-numeric:tabular-nums;white-space:nowrap;display:flex;align-items:center;gap:4px}
+.read small{font-size:14px;font-weight:500;color:var(--muted)}
+#arr{width:18px;height:18px;color:var(--entry);flex:none}
+dl{margin:0}
+
+button,input,select{font:inherit;color:inherit}
+button{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:11px 8px;font-weight:600;cursor:pointer;min-width:0}
+button:disabled{opacity:.45;cursor:default}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--trail);outline-offset:2px}
+button.main{background:var(--btn);color:var(--on-btn);border-color:var(--btn);font-size:17px}
+button.act{border-color:var(--ret);color:var(--ret)}
+input,select{background:var(--stage);border:1px solid var(--line);border-radius:4px;padding:8px}
+.pad{display:grid;grid-template-columns:1fr 2fr 1fr;gap:8px}
+.acts{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+.acts .main{grid-column:span 4}
+.acts .cfg{grid-column:span 2}
+.acts .sec{grid-column:span 2;font-size:14px}
+
+.sheet{position:absolute;left:16px;right:16px;bottom:10px;max-height:82%;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px;display:flex;flex-direction:column;gap:14px;box-shadow:0 -8px 30px rgba(0,0,0,.25)}
+.sheet h2{margin:0;font-family:var(--f-num);font-size:18px;letter-spacing:.06em;text-transform:uppercase;display:flex;justify-content:space-between;align-items:center}
+.row{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.row>span{flex:1;min-width:140px}
+.row .ctl{display:flex;gap:6px;align-items:center}
+.ctl button{width:40px;padding:8px 0}
+.ctl output{font-family:var(--f-num);font-size:20px;font-weight:600;min-width:64px;text-align:center;font-variant-numeric:tabular-nums}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+#log{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px}
+#log li{border-top:1px solid var(--line);padding-top:6px;line-height:1.35}
+#log b{font-family:var(--f-num);font-size:17px}
+.note{margin:0;color:var(--muted);font-size:13px;line-height:1.4}
+.warn{margin:0;border-left:3px solid var(--trail);padding-left:10px;font-size:13px;line-height:1.4}
+</style>
+
+<div class="app">
+  <header>
+    <h1>GPS de interiores</h1>
+    <span class="chip" id="chip">Sin iniciar</span>
+  </header>
+
+  <div class="stage" id="stage">
+    <canvas id="cv" aria-label="Plano con la posición estimada"></canvas>
+    <div class="guide" id="guide"></div>
+    <div class="zoom">
+      <button id="zin" aria-label="Acercar">+</button>
+      <button id="zout" aria-label="Alejar">−</button>
+      <button id="zfit" aria-label="Centrar en mi posición">⌖</button>
+    </div>
+    <form class="cal" id="calForm" hidden>
+      <label for="calDist">Distancia real entre los dos puntos (m)</label>
+      <input id="calDist" type="number" inputmode="decimal" min="0.1" step="0.01" required>
+      <button class="main" type="submit">Aplicar</button>
+    </form>
+    <div class="toast" id="toast" hidden></div>
+  </div>
+
+  <dl class="read">
+    <div><dt>Pasos</dt><dd id="rSteps">0</dd></div>
+    <div><dt>Recorrido</dt><dd><span id="rDist">0</span><small>m</small></dd></div>
+    <div><dt id="tLbl">Entrada</dt><dd><svg id="arr" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2l6 15-6-4-6 4z" fill="currentColor"/></svg><span id="rEntry">–</span><small>m</small></dd></div>
+    <div><dt>Rumbo</dt><dd><span id="rHead">–</span><small>°</small></dd></div>
+  </dl>
+
+  <div class="pad" id="pad" hidden>
+    <button id="mL" aria-label="Girar a la izquierda">⟲ Giro</button>
+    <button id="mS">Paso</button>
+    <button id="mR" aria-label="Girar a la derecha">Giro ⟳</button>
+  </div>
+
+  <div class="acts">
+    <button class="main" id="bMain" disabled>Iniciar</button>
+    <button class="cfg" id="bCfg">Ajustes</button>
+    <button class="sec" id="bRet" disabled>Volver</button>
+    <button class="sec" id="bFix" disabled>Corregir</button>
+    <button class="sec" id="bLoop" disabled>En la entrada</button>
+  </div>
+
+  <div class="sheet" id="sheet" hidden>
+    <h2>Ajustes <button id="bClose">Cerrar</button></h2>
+    <div class="row"><span>Longitud de zancada</span>
+      <div class="ctl"><button id="slM" aria-label="Zancada más corta">−</button><output id="slO">0,70 m</output><button id="slP" aria-label="Zancada más larga">+</button></div></div>
+    <div class="row"><span><label for="sens">Detección de pasos</label></span>
+      <select id="sens"><option value="0.9">Sensible</option><option value="1.3" selected>Normal</option><option value="2">Exigente</option></select></div>
+    <div class="row"><span>Brújula frente a giroscopio</span><div class="ctl"><output id="cmp">–</output></div></div>
+    <div class="btns">
+      <button id="bLoad">Cargar otro plano</button>
+      <button id="bScale">Ajustar escala</button>
+      <button id="bReset">Reiniciar recorrido</button>
+      <button id="bClear">Borrar mediciones</button>
+    </div>
+    <input id="file" type="file" accept="image/*" hidden>
+    <div>
+      <div class="lbl">Mediciones de error</div>
+      <ul id="log"></ul>
+      <p class="note" id="logEmpty">Aún no hay mediciones. Al volver al punto de entrada pulsa «En la entrada»; si ves que el marcador no coincide con tu sitio real, pulsa «Corregir» y toca dónde estás.</p>
+    </div>
+    <p class="warn">Prototipo de pruebas. La posición se estima contando pasos y acumula error. No sustituye a la cuerda guía, la manguera ni el procedimiento.</p>
+  </div>
+</div>
+
+<script>
+(()=>{
+const PLAN_SRC="", PLAN_PPM=86.61; // 1/50 a 110 ppp
+const $=id=>document.getElementById(id);
+const cv=$('cv'),ctx=cv.getContext('2d'),stage=$('stage');
+const fmt=(v,d=1)=>v.toLocaleString('es-ES',{minimumFractionDigits:d,maximumFractionDigits:d});
+const store={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
+
+const S={mode:'place',prev:'place',ppm:PLAN_PPM,entry:null,pos:null,th:0,trail:[],rtrail:[],steps:0,dist:0,
+  tracking:false,started:false,sensors:false,ret:false,retIdx:0,target:null,
+  stepLen:store.get('gps.step',0.7),thr:store.get('gps.thr',1.3),log:store.get('gps.log',[]),cal:[]};
+let mask=null,tint=null,iw=1,ih=1,W=1,H=1,dpr=1,view={s:1,ox:0,oy:0},follow=true,dirty=true;
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+/* ---------- plano ---------- */
+function setPlan(src,ppm,scaled){
+  const im=new Image();
+  im.onload=()=>{
+    const k=Math.min(1,2400/Math.max(im.width,im.height));
+    const c=document.createElement('canvas');c.width=Math.round(im.width*k);c.height=Math.round(im.height*k);
+    const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(im,0,0,c.width,c.height);
+    const d=x.getImageData(0,0,c.width,c.height),p=d.data;
+    for(let i=0;i<p.length;i+=4){const l=.299*p[i]+.587*p[i+1]+.114*p[i+2];p[i]=p[i+1]=p[i+2]=255;p[i+3]=Math.min(255,(255-l)*1.6)}
+    x.putImageData(d,0,0);mask=c;iw=c.width;ih=c.height;
+    tint=document.createElement('canvas');tint.width=iw;tint.height=ih;
+    S.ppm=ppm?(scaled?ppm:ppm*k):0;retint();fit();
+    if(!ppm){S.prev='place';S.mode='cal1';S.cal=[]}
+    ui();
+  };
+  im.src=src;
+}
+function retint(){
+  if(!mask)return;const t=tint.getContext('2d');
+  t.globalCompositeOperation='source-over';t.clearRect(0,0,iw,ih);t.drawImage(mask,0,0);
+  t.globalCompositeOperation='source-in';t.fillStyle=css('--ink');t.fillRect(0,0,iw,ih);dirty=true;
+}
+function resize(){
+  const r=stage.getBoundingClientRect();W=Math.max(1,r.width);H=Math.max(1,r.height);dpr=window.devicePixelRatio||1;
+  cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);dirty=true;
+}
+function fit(){view.s=Math.min(W/iw,H/ih)*.97;view.ox=(W-iw*view.s)/2;view.oy=(H-ih*view.s)/2;dirty=true}
+function center(){if(!S.pos)return;view.ox=W/2-S.pos.x*view.s;view.oy=H/2-S.pos.y*view.s;dirty=true}
+function zoomAt(f,cx,cy){const s=Math.max(.05,Math.min(14,view.s*f)),px=(cx-view.ox)/view.s,py=(cy-view.oy)/view.s;view.s=s;view.ox=cx-px*s;view.oy=cy-py*s;dirty=true}
+
+/* ---------- dibujo ---------- */
+function path(pts){ctx.beginPath();pts.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.stroke()}
+function draw(){
+  requestAnimationFrame(draw);if(!dirty)return;dirty=false;
+  const s=view.s,u=1/s;
+  ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
+  ctx.save();ctx.translate(view.ox,view.oy);ctx.scale(s,s);
+  if(tint)ctx.drawImage(tint,0,0);
+  ctx.lineJoin='round';ctx.lineCap='round';
+  if(S.trail.length>1){ctx.strokeStyle=css('--trail');ctx.lineWidth=(S.ret?5:3)*u;ctx.globalAlpha=S.ret?.55:1;path(S.trail);ctx.globalAlpha=1}
+  if(S.rtrail.length>1){ctx.strokeStyle=css('--ret');ctx.lineWidth=3*u;ctx.setLineDash([6*u,6*u]);path(S.rtrail);ctx.setLineDash([])}
+  if(S.entry){
+    const e=S.entry;ctx.strokeStyle=ctx.fillStyle=css('--entry');ctx.lineWidth=2.5*u;
+    ctx.beginPath();ctx.arc(e.x,e.y,9*u,0,7);ctx.stroke();ctx.beginPath();ctx.arc(e.x,e.y,2.5*u,0,7);ctx.fill();
+    ctx.font=`600 ${12*u}px "Barlow Condensed","Arial Narrow",sans-serif`;ctx.fillText('ENTRADA',e.x+13*u,e.y+4*u);
+  }
+  if(S.ret&&S.target){ctx.strokeStyle=css('--ret');ctx.lineWidth=2.5*u;ctx.beginPath();ctx.arc(S.target.x,S.target.y,7*u,0,7);ctx.stroke()}
+  S.cal.forEach(p=>{ctx.strokeStyle=css('--ret');ctx.lineWidth=2.5*u;ctx.beginPath();ctx.moveTo(p.x-9*u,p.y);ctx.lineTo(p.x+9*u,p.y);ctx.moveTo(p.x,p.y-9*u);ctx.lineTo(p.x,p.y+9*u);ctx.stroke()});
+  if(S.cal.length===2){ctx.setLineDash([5*u,5*u]);path(S.cal);ctx.setLineDash([])}
+  if(S.pos&&S.mode!=='place'&&S.mode!=='aim'){
+    ctx.save();ctx.translate(S.pos.x,S.pos.y);ctx.rotate(S.th);ctx.scale(u,u);
+    ctx.beginPath();ctx.moveTo(0,-15);ctx.lineTo(10,11);ctx.lineTo(0,5);ctx.lineTo(-10,11);ctx.closePath();
+    ctx.fillStyle=css('--pos');ctx.fill();ctx.lineWidth=2;ctx.strokeStyle=css('--stage');ctx.stroke();ctx.restore();
+  }
+  ctx.restore();
+  // escala gráfica
+  if(S.ppm){
+    const m=[.5,1,2,5,10,20,50,100].find(v=>v*S.ppm*s>=56)||100,L=m*S.ppm*s,x=10,y=H-12;
+    ctx.strokeStyle=ctx.fillStyle=css('--muted');ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x,y-5);ctx.lineTo(x,y);ctx.lineTo(x+L,y);ctx.lineTo(x+L,y-5);ctx.stroke();
+    ctx.font='600 12px "Barlow Condensed","Arial Narrow",sans-serif';ctx.fillText(fmt(m,m<1?1:0)+' m',x+4,y-6);
+  }
+}
+
+/* ---------- gestos ---------- */
+const pts=new Map();let pinch=null,moved=false,downT=0;
+const loc=e=>{const r=cv.getBoundingClientRect();return{x:e.clientX-r.left,y:e.clientY-r.top}};
+cv.addEventListener('pointerdown',e=>{cv.setPointerCapture(e.pointerId);pts.set(e.pointerId,loc(e));
+  if(pts.size===1){moved=false;downT=Date.now()}
+  if(pts.size===2){const[a,b]=[...pts.values()];const mx=(a.x+b.x)/2,my=(a.y+b.y)/2;pinch={d:Math.hypot(a.x-b.x,a.y-b.y)||1,s:view.s,px:(mx-view.ox)/view.s,py:(my-view.oy)/view.s};moved=true}});
+cv.addEventListener('pointermove',e=>{if(!pts.has(e.pointerId))return;const o=pts.get(e.pointerId),n=loc(e);
+  if(pts.size===1){if(!moved&&Math.hypot(n.x-o.x,n.y-o.y)<7)return;moved=true;follow=false;view.ox+=n.x-o.x;view.oy+=n.y-o.y;pts.set(e.pointerId,n);dirty=true}
+  else if(pts.size===2&&pinch){pts.set(e.pointerId,n);const[a,b]=[...pts.values()];const mx=(a.x+b.x)/2,my=(a.y+b.y)/2;
+    view.s=Math.max(.05,Math.min(14,pinch.s*Math.hypot(a.x-b.x,a.y-b.y)/pinch.d));view.ox=mx-pinch.px*view.s;view.oy=my-pinch.py*view.s;follow=false;dirty=true}});
+const up=e=>{if(!pts.has(e.pointerId))return;const p=pts.get(e.pointerId);pts.delete(e.pointerId);if(pts.size<2)pinch=null;
+  if(e.type==='pointerup'&&pts.size===0&&!moved&&Date.now()-downT<600)tap((p.x-view.ox)/view.s,(p.y-view.oy)/view.s)};
+cv.addEventListener('pointerup',up);cv.addEventListener('pointercancel',up);
+cv.addEventListener('wheel',e=>{e.preventDefault();const p=loc(e);zoomAt(e.deltaY<0?1.15:1/1.15,p.x,p.y);follow=false},{passive:false});
+$('zin').onclick=()=>zoomAt(1.4,W/2,H/2);$('zout').onclick=()=>zoomAt(1/1.4,W/2,H/2);
+$('zfit').onclick=()=>{if(S.pos&&S.mode!=='place'){follow=true;if(view.s*S.ppm<28)view.s=28/S.ppm;center()}else fit()};
+
+function tap(x,y){
+  const m=S.mode;
+  if(m==='place'){S.entry={x,y};S.pos={x,y};S.trail=[{x,y}];S.mode='aim'}
+  else if(m==='aim'||m==='ready'){if(Math.hypot(x-S.pos.x,y-S.pos.y)<4)return;S.th=Math.atan2(x-S.pos.x,-(y-S.pos.y));S.mode='ready'}
+  else if(m==='fix'){const err=Math.hypot(x-S.pos.x,y-S.pos.y)/S.ppm;measure('Corrección manual',err);S.pos={x,y};(S.ret?S.rtrail:S.trail).push({x,y});S.mode='run';off=null}
+  else if(m==='cal1'){S.cal=[{x,y}];S.mode='cal2'}
+  else if(m==='cal2'){S.cal[1]={x,y};S.mode='cal3';$('calDist').value='';setTimeout(()=>$('calDist').focus(),50)}
+  ui();
+}
+
+/* ---------- sensores ---------- */
+let sensTried=false,gotM=false,gotO=false,off=null,hs=0,hs0=0,comp=null,comp0=null,grav=null,flt=0,armed=true,lastStep=0;
+const wrap=a=>Math.atan2(Math.sin(a),Math.cos(a));
+async function enableSensors(){
+  if(sensTried)return;sensTried=true;
+  try{if(window.DeviceMotionEvent&&DeviceMotionEvent.requestPermission)await DeviceMotionEvent.requestPermission()}catch(e){}
+  try{if(window.DeviceOrientationEvent&&DeviceOrientationEvent.requestPermission)await DeviceOrientationEvent.requestPermission()}catch(e){}
+  addEventListener('devicemotion',onMotion);addEventListener('deviceorientation',onOri);
+  setTimeout(()=>{S.sensors=gotM&&gotO;ui()},1500);
+}
+function onOri(e){
+  if(e.alpha==null)return;gotO=true;
+  const r=Math.PI/180,a=e.alpha*r,b=(e.beta||0)*r,g=(e.gamma||0)*r,sA=Math.sin(a),cA=Math.cos(a),sB=Math.sin(b),cB=Math.cos(b),sG=Math.sin(g),cG=Math.cos(g);
+  // rumbo del eje superior del móvil; si va vertical, el de su cara trasera
+  let hx=-cB*sA,hy=cA*cB;if(Math.hypot(hx,hy)<.45){hx=-(cG*sA*sB+cA*sG);hy=-(sA*sG-cA*cG*sB)}
+  hs=Math.atan2(hx,hy);
+  if(typeof e.webkitCompassHeading==='number')comp=e.webkitCompassHeading*r;
+  if(S.tracking&&gotM){
+    if(off==null){off=S.th-hs;hs0=hs;comp0=comp}
+    S.th=wrap(hs+off);dirty=true;readHead();
+  }
+}
+function compDelta(){if(comp==null||comp0==null)return null;return wrap((comp-comp0)-(hs-hs0))*180/Math.PI}
+function onMotion(e){
+  const a=e.accelerationIncludingGravity;if(!a||a.x==null)return;gotM=true;
+  const m=Math.hypot(a.x,a.y,a.z);if(grav==null)grav=m;grav+=(m-grav)*.02;flt+=((m-grav)-flt)*.35;
+  const t=performance.now();
+  if(flt<0)armed=true;
+  if(armed&&flt>S.thr&&t-lastStep>300){armed=false;lastStep=t;if(S.tracking&&S.sensors)step()}
+}
+
+/* ---------- recorrido ---------- */
+function step(){
+  const L=S.stepLen*S.ppm;S.pos={x:S.pos.x+Math.sin(S.th)*L,y:S.pos.y-Math.cos(S.th)*L};
+  (S.ret?S.rtrail:S.trail).push(S.pos);S.steps++;S.dist+=S.stepLen;
+  if(S.ret)S.target=retTarget();
+  if(follow){const sx=S.pos.x*view.s+view.ox,sy=S.pos.y*view.s+view.oy;if(sx<W*.25||sx>W*.75||sy<H*.25||sy>H*.75)center()}
+  if(S.steps===1)ui();else read();dirty=true;
+}
+function retTarget(){
+  const T=S.trail;if(T.length<2)return S.entry;
+  let bi=0,bd=Infinity;for(let i=0;i<=S.retIdx;i++){const d=(T[i].x-S.pos.x)**2+(T[i].y-S.pos.y)**2;if(d<bd){bd=d;bi=i}}
+  S.retIdx=bi;let acc=0,j=bi;while(j>0&&acc<2*S.ppm){acc+=Math.hypot(T[j].x-T[j-1].x,T[j].y-T[j-1].y);j--}
+  return T[j];
+}
+function readHead(){
+  $('rHead').textContent=S.pos&&S.mode!=='place'&&S.mode!=='aim'?Math.round(((S.th*180/Math.PI)%360+360)%360):'–';
+  const t=S.ret&&S.target?S.target:S.entry;
+  if(t&&S.pos){const dx=t.x-S.pos.x,dy=t.y-S.pos.y,far=Math.hypot(dx,dy)>.3*S.ppm;
+    $('arr').style.transform=`rotate(${far?Math.atan2(dx,-dy)-S.th:0}rad)`;$('arr').style.opacity=far?1:.3}
+  const c=compDelta();$('cmp').textContent=c==null?'–':(c>0?'+':'')+Math.round(c)+'°';
+}
+function read(){
+  $('rSteps').textContent=S.steps;$('rDist').textContent=fmt(S.dist);
+  $('rEntry').textContent=S.entry&&S.pos&&S.ppm?fmt(Math.hypot(S.entry.x-S.pos.x,S.entry.y-S.pos.y)/S.ppm):'–';
+  readHead();
+}
+function measure(kind,err){
+  const c=compDelta();
+  S.log.unshift({kind,err,dist:S.dist,steps:S.steps,comp:c==null?null:Math.round(c),at:new Date().toLocaleTimeString('es-ES',{hour:'2-digit',minute:'2-digit'})});
+  S.log=S.log.slice(0,40);store.set('gps.log',S.log);renderLog();
+  toast(`${kind}: error de ${fmt(err)} m tras ${fmt(S.dist)} m`+(S.dist>0?` (${fmt(err/S.dist*100)} %)`:''));
+}
+function renderLog(){
+  const ul=$('log');ul.textContent='';$('logEmpty').hidden=S.log.length>0;
+  S.log.forEach(m=>{const li=document.createElement('li'),b=document.createElement('b');
+    b.textContent=`${fmt(m.err)} m`+(m.dist>0?` · ${fmt(m.err/m.dist*100)} %`:'');
+    li.append(b,document.createElement('br'),`${m.kind} · ${m.at} · ${fmt(m.dist)} m recorridos, ${m.steps} pasos`+(m.comp==null?'':` · brújula ${m.comp>0?'+':''}${m.comp}°`));ul.append(li)});
+}
+let toastT=0;function toast(t){const el=$('toast');el.textContent=t;el.hidden=false;clearTimeout(toastT);toastT=setTimeout(()=>el.hidden=true,6000)}
+
+/* ---------- interfaz ---------- */
+const GUIDE={
+  place:'<b>1</b>Toca el plano en el punto donde estás: será la entrada.',
+  aim:'<b>2</b>Toca un punto del plano hacia donde apunta el móvil.',
+  ready:'Sujeta el móvil apuntando al frente y pulsa Iniciar. Toca otra vez el plano si quieres cambiar la dirección.',
+  fix:'Toca el plano en el punto donde estás de verdad.',
+  cal1:'<b>1</b>Escala: toca un punto del plano que puedas medir, por ejemplo una esquina.',
+  cal2:'<b>2</b>Toca el segundo punto.',
+  noplan:'Abre Ajustes y pulsa «Cargar plano» para elegir la imagen del plano.',
+  cal3:'Escribe abajo la distancia real entre los dos puntos.'
+};
+function ui(){
+  const m=S.mode,g=$('guide');let t=GUIDE[m]||'';
+  if(m==='run'){
+    if(!S.started)t='';
+    else if(!sensTried||(!gotM&&!S.sensors&&performance.now()-startT<1500))t='Comprobando sensores…';
+    else if(!S.sensors)t='Aquí no llegan los sensores de movimiento del móvil. Usa Paso y Giro para mover el marcador a mano.';
+    else if(!S.tracking)t='En pausa.';
+    else if(S.ret)t='Regreso: sigue la flecha por el mismo camino hasta la entrada.';
+    else t='';
+  }
+  g.innerHTML=t;g.hidden=!t;
+  $('calForm').hidden=m!=='cal3';
+  const run=m==='run';
+  $('bMain').disabled=!(m==='ready'||run);
+  $('bMain').textContent=run?(S.tracking?'Pausar':'Reanudar'):'Iniciar';
+  $('bRet').disabled=!run||S.trail.length<2;$('bRet').textContent=S.ret?'Fin regreso':'Volver';$('bRet').classList.toggle('act',S.ret);
+  $('bFix').disabled=!(run||m==='fix');$('bFix').textContent=m==='fix'?'Cancelar':'Corregir';$('bFix').classList.toggle('act',m==='fix');
+  $('bLoop').disabled=!run||S.dist===0;
+  $('pad').hidden=!(run&&S.tracking&&sensTried&&!S.sensors&&performance.now()-startT>=1400);
+  const chip=$('chip');chip.textContent=!S.started?'Sin iniciar':S.sensors?'Sensores activos':'Modo manual';chip.classList.toggle('on',S.sensors);
+  $('tLbl').textContent=S.ret?'Regreso':'Entrada';
+  $('slO').textContent=fmt(S.stepLen,2)+' m';
+  read();resize();dirty=true;
+}
+let startT=0,lock=null;
+$('bMain').onclick=async()=>{
+  if(S.mode==='ready'){S.mode='run';S.started=true;S.tracking=true;off=null;startT=performance.now();follow=true;
+    if(view.s*S.ppm<28)view.s=28/S.ppm;center();ui();
+    try{lock=await navigator.wakeLock.request('screen')}catch(e){}
+    await enableSensors();setTimeout(ui,1550);
+  }else if(S.mode==='run'){S.tracking=!S.tracking;off=null;ui()}
+};
+document.addEventListener('visibilitychange',async()=>{if(document.visibilityState==='visible'&&S.tracking){try{lock=await navigator.wakeLock.request('screen')}catch(e){}}});
+$('mS').onclick=()=>step();
+$('mL').onclick=()=>{S.th=wrap(S.th-Math.PI/12);readHead();dirty=true};
+$('mR').onclick=()=>{S.th=wrap(S.th+Math.PI/12);readHead();dirty=true};
+$('bRet').onclick=()=>{
+  if(!S.ret){S.ret=true;S.retIdx=S.trail.length-1;S.rtrail=[S.pos];S.target=retTarget()}
+  else{S.ret=false;S.trail=S.trail.concat(S.rtrail);S.rtrail=[];S.target=null}
+  ui();
+};
+$('bFix').onclick=()=>{S.mode=S.mode==='fix'?'run':'fix';ui()};
+$('bLoop').onclick=()=>{
+  measure('Cierre en la entrada',Math.hypot(S.entry.x-S.pos.x,S.entry.y-S.pos.y)/S.ppm);
+  S.pos={...S.entry};S.trail=[S.pos];S.rtrail=[];S.ret=false;S.target=null;S.steps=0;S.dist=0;off=null;center();ui();
+};
+function reset(){Object.assign(S,{mode:'place',entry:null,pos:null,trail:[],rtrail:[],steps:0,dist:0,tracking:false,started:false,ret:false,target:null,cal:[]});off=null;fit();ui()}
+$('bCfg').onclick=()=>{$('sheet').hidden=false;readHead()};$('bClose').onclick=()=>$('sheet').hidden=true;
+$('slM').onclick=()=>setStep(-.05);$('slP').onclick=()=>setStep(.05);
+function setStep(d){S.stepLen=Math.round(Math.max(.3,Math.min(1.1,S.stepLen+d))*100)/100;store.set('gps.step',S.stepLen);$('slO').textContent=fmt(S.stepLen,2)+' m'}
+$('sens').value=String(S.thr);if(!$('sens').value)$('sens').value='1.3';
+$('sens').onchange=e=>{S.thr=+e.target.value;store.set('gps.thr',S.thr)};
+$('bReset').onclick=()=>{$('sheet').hidden=true;reset()};
+$('bClear').onclick=()=>{S.log=[];store.set('gps.log',[]);renderLog()};
+$('bLoad').onclick=()=>$('file').click();if(!PLAN_SRC)$('bLoad').textContent='Cargar plano';
+$('file').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{$('sheet').hidden=true;reset();if(!PLAN_SRC&&r.result.length<3e6)store.set('gps.plan',r.result);store.set('gps.ppm',0);setPlan(r.result,0)};r.readAsDataURL(f);e.target.value=''};
+$('bScale').onclick=()=>{$('sheet').hidden=true;S.prev=S.mode==='run'||S.mode==='ready'||S.mode==='aim'?S.mode:'place';S.tracking=false;S.cal=[];S.mode='cal1';ui()};
+$('calForm').addEventListener('submit',e=>{e.preventDefault();const d=parseFloat(String($('calDist').value).replace(',','.'));if(!(d>0))return;
+  S.ppm=Math.hypot(S.cal[0].x-S.cal[1].x,S.cal[0].y-S.cal[1].y)/d;S.cal=[];S.mode=S.prev;if(!PLAN_SRC)store.set('gps.ppm',S.ppm);toast(`Escala ajustada: ${fmt(S.ppm,0)} px por metro`);ui()});
+
+new ResizeObserver(()=>{resize()}).observe(stage);
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',retint);
+new MutationObserver(retint).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+if(document.fonts&&document.fonts.ready)document.fonts.ready.then(()=>dirty=true);
+resize();renderLog();ui();
+const sp=!PLAN_SRC&&store.get('gps.plan',null);
+if(PLAN_SRC)setPlan(PLAN_SRC,PLAN_PPM);else if(sp)setPlan(sp,store.get('gps.ppm',0),true);else{S.mode='noplan';ui()}
+requestAnimationFrame(draw);
+})();
+</script>
+</body></html>
