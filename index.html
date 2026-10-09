@@ -248,12 +248,20 @@ function tap(x,y){
 /* ---------- sensores ---------- */
 let sensTried=false,gotM=false,gotO=false,off=null,hs=0,hs0=0,comp=null,comp0=null,grav=null,flt=0,armed=true,lastStep=0;
 const wrap=a=>Math.atan2(Math.sin(a),Math.cos(a));
-async function enableSensors(){
-  if(sensTried)return;sensTried=true;
-  try{if(window.DeviceMotionEvent&&DeviceMotionEvent.requestPermission)await DeviceMotionEvent.requestPermission()}catch(e){}
-  try{if(window.DeviceOrientationEvent&&DeviceOrientationEvent.requestPermission)await DeviceOrientationEvent.requestPermission()}catch(e){}
-  addEventListener('devicemotion',onMotion);addEventListener('deviceorientation',onOri);
-  setTimeout(()=>{S.sensors=gotM&&gotO;ui()},1500);
+let sensErr='';
+// iOS solo enseña el aviso de permiso si se pide dentro del mismo toque, sin ningún await antes
+function enableSensors(){
+  if(S.sensors)return;sensErr='';sensTried=true;
+  const reqs=[];
+  for(const E of [window.DeviceMotionEvent,window.DeviceOrientationEvent]){
+    try{if(E&&typeof E.requestPermission==='function')reqs.push(E.requestPermission())}catch(e){sensErr=String(e&&e.message||e)}
+  }
+  const listen=()=>{addEventListener('devicemotion',onMotion);addEventListener('deviceorientation',onOri)};
+  listen();
+  Promise.allSettled(reqs).then(rs=>{
+    rs.forEach(r=>{if(r.status==='rejected')sensErr=String(r.reason&&r.reason.message||r.reason);else if(r.value!=='granted')sensErr='denied'});
+    listen();setTimeout(()=>{S.sensors=gotM&&gotO;ui()},1500);
+  });
 }
 function onOri(e){
   if(e.alpha==null)return;gotO=true;
@@ -332,7 +340,8 @@ function ui(){
   if(m==='run'){
     if(!S.started)t='';
     else if(!sensTried||(!gotM&&!S.sensors&&performance.now()-startT<1500))t='Comprobando sensores…';
-    else if(!S.sensors)t='Aquí no llegan los sensores de movimiento del móvil. Usa Paso y Giro para mover el marcador a mano.';
+    else if(!S.sensors)t=sensErr==='denied'?'Safari ha denegado el permiso de movimiento. Cierra esta pestaña, abre la página otra vez y pulsa Permitir cuando lo pida.'
+      :'No llegan datos de los sensores de movimiento'+(sensErr?' ('+sensErr+')':'')+'. Pulsa Pausar y luego Reanudar para volver a pedir el permiso. Mientras, puedes usar Paso y Giro.';
     else if(!S.tracking)t='En pausa.';
     else if(S.ret)t='Regreso: sigue la flecha por el mismo camino hasta la entrada.';
     else t='';
@@ -352,12 +361,13 @@ function ui(){
   read();resize();dirty=true;
 }
 let startT=0,lock=null;
-$('bMain').onclick=async()=>{
-  if(S.mode==='ready'){S.mode='run';S.started=true;S.tracking=true;off=null;startT=performance.now();follow=true;
+$('bMain').onclick=()=>{
+  const starting=S.mode==='ready'||(S.mode==='run'&&!S.tracking);
+  if(starting){enableSensors();startT=performance.now();setTimeout(ui,1600)}
+  if(S.mode==='ready'){S.mode='run';S.started=true;S.tracking=true;off=null;follow=true;
     if(view.s*S.ppm<28)view.s=28/S.ppm;center();ui();
-    try{lock=await navigator.wakeLock.request('screen')}catch(e){}
-    await enableSensors();setTimeout(ui,1550);
   }else if(S.mode==='run'){S.tracking=!S.tracking;off=null;ui()}
+  if(S.tracking){try{navigator.wakeLock.request('screen').then(l=>lock=l,()=>{})}catch(e){}}
 };
 document.addEventListener('visibilitychange',async()=>{if(document.visibilityState==='visible'&&S.tracking){try{lock=await navigator.wakeLock.request('screen')}catch(e){}}});
 $('mS').onclick=()=>step();
