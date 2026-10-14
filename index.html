@@ -150,7 +150,7 @@ const fmt=(v,d=1)=>v.toLocaleString('es-ES',{minimumFractionDigits:d,maximumFrac
 const store={get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v)}catch(e){return d}},set(k,v){try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}}};
 
 const S={mode:'place',prev:'place',ppm:PLAN_PPM,entry:null,pos:null,th:0,trail:[],rtrail:[],steps:0,dist:0,
-  tracking:false,started:false,sensors:false,ret:false,retIdx:0,target:null,
+  tracking:false,started:false,sensors:false,ret:false,sR:0,cum:[0],offRoute:false,arrived:false,target:null,
   stepLen:store.get('gps.step',0.7),thr:store.get('gps.thr',1.3),log:store.get('gps.log',[]),cal:[]};
 let mask=null,tint=null,iw=1,ih=1,W=1,H=1,dpr=1,view={s:1,ox:0,oy:0},follow=true,dirty=true;
 const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -239,7 +239,7 @@ function tap(x,y){
   const m=S.mode;
   if(m==='place'){S.entry={x,y};S.pos={x,y};S.trail=[{x,y}];S.mode='aim'}
   else if(m==='aim'||m==='ready'){if(Math.hypot(x-S.pos.x,y-S.pos.y)<4)return;S.th=Math.atan2(x-S.pos.x,-(y-S.pos.y));S.mode='ready'}
-  else if(m==='fix'){const err=Math.hypot(x-S.pos.x,y-S.pos.y)/S.ppm;measure('Corrección manual',err);S.pos={x,y};(S.ret?S.rtrail:S.trail).push({x,y});S.mode='run';off=null}
+  else if(m==='fix'){const err=Math.hypot(x-S.pos.x,y-S.pos.y)/S.ppm;measure('Corrección manual',err);S.pos={x,y};if(S.ret){const b=project(S.pos,0,S.cum[S.cum.length-1]);S.sR=b.s;S.offRoute=false;S.target=pointAt(S.sR-2*S.ppm);S.rtrail.push({x,y})}else S.trail.push({x,y});S.mode='run';off=null}
   else if(m==='cal1'){S.cal=[{x,y}];S.mode='cal2'}
   else if(m==='cal2'){S.cal[1]={x,y};S.mode='cal3';$('calDist').value='';setTimeout(()=>$('calDist').focus(),50)}
   ui();
@@ -286,17 +286,56 @@ function onMotion(e){
 
 /* ---------- recorrido ---------- */
 function step(){
-  const L=S.stepLen*S.ppm;S.pos={x:S.pos.x+Math.sin(S.th)*L,y:S.pos.y-Math.cos(S.th)*L};
-  (S.ret?S.rtrail:S.trail).push(S.pos);S.steps++;S.dist+=S.stepLen;
-  if(S.ret)S.target=retTarget();
+  const L=S.stepLen*S.ppm,p={x:S.pos.x+Math.sin(S.th)*L,y:S.pos.y-Math.cos(S.th)*L};
+  S.steps++;S.dist+=S.stepLen;
+  if(S.ret)retStep(p);else{S.pos=p;S.trail.push(p)}
   if(follow){const sx=S.pos.x*view.s+view.ox,sy=S.pos.y*view.s+view.oy;if(sx<W*.25||sx>W*.75||sy<H*.25||sy>H*.75)center()}
   if(S.steps===1)ui();else read();dirty=true;
 }
-function retTarget(){
-  const T=S.trail;if(T.length<2)return S.entry;
-  let bi=0,bd=Infinity;for(let i=0;i<=S.retIdx;i++){const d=(T[i].x-S.pos.x)**2+(T[i].y-S.pos.y)**2;if(d<bd){bd=d;bi=i}}
-  S.retIdx=bi;let acc=0,j=bi;while(j>0&&acc<2*S.ppm){acc+=Math.hypot(T[j].x-T[j-1].x,T[j].y-T[j-1].y);j--}
-  return T[j];
+/* Regreso pegado al rastro de ida: cada paso se proyecta sobre el camino ya recorrido */
+function buildCum(){const T=S.trail,c=[0];for(let i=1;i<T.length;i++)c.push(c[i-1]+Math.hypot(T[i].x-T[i-1].x,T[i].y-T[i-1].y));S.cum=c}
+function pointAt(s){
+  const T=S.trail,c=S.cum;s=Math.max(0,Math.min(c[c.length-1],s));let i=1;while(i<c.length-1&&c[i]<s)i++;
+  const seg=c[i]-c[i-1],t=seg?(s-c[i-1])/seg:0;return{x:T[i-1].x+(T[i].x-T[i-1].x)*t,y:T[i-1].y+(T[i].y-T[i-1].y)*t};
+}
+function project(p,lo,hi){
+  const T=S.trail,c=S.cum;let best=null;
+  for(let i=1;i<T.length;i++){
+    if(c[i]<lo||c[i-1]>hi)continue;
+    const ax=T[i-1].x,ay=T[i-1].y,dx=T[i].x-ax,dy=T[i].y-ay,L2=dx*dx+dy*dy;
+    let t=L2?((p.x-ax)*dx+(p.y-ay)*dy)/L2:0;t=Math.max(0,Math.min(1,t));
+    const sv=Math.max(lo,Math.min(hi,c[i-1]+t*(c[i]-c[i-1]))),q=pointAt(sv),d=Math.hypot(q.x-p.x,q.y-p.y);
+    if(!best||d<best.d)best={s:sv,d,x:q.x,y:q.y};
+  }
+  return best;
+}
+function retStep(p){
+  // la posición sigue siendo la estimada por pasos y rumbo; el camino de ida solo sirve para medir la desviación
+  S.pos=p;S.rtrail.push(p);
+  const b=project(p,S.sR-4*S.ppm,S.sR+S.ppm);if(!b)return;
+  const dev=b.d/S.ppm;S.sR=b.s;
+  if(dev<1){ // desviación del tamaño del error normal: se corrige un poco hacia el camino
+    S.pos={x:p.x+(b.x-p.x)*.3,y:p.y+(b.y-p.y)*.3};S.rtrail[S.rtrail.length-1]=S.pos;
+    const a=pointAt(b.s+.5*S.ppm),z=pointAt(b.s-.5*S.ppm);
+    if(Math.hypot(z.x-a.x,z.y-a.y)>.3*S.ppm){const diff=wrap(Math.atan2(z.x-a.x,-(z.y-a.y))-S.th);
+      if(Math.abs(diff)<Math.PI/6){S.th=wrap(S.th+diff*.15);if(off!=null)off+=diff*.15}}
+  }
+  const was=S.offRoute;
+  S.offRoute=was?dev>1.5:dev>2;S.dev=dev;
+  if(S.offRoute){ // a qué lado del camino de vuelta estás
+    const a=pointAt(b.s+.3*S.ppm),z=pointAt(b.s-.3*S.ppm),cr=(z.x-a.x)*(p.y-b.y)-(z.y-a.y)*(p.x-b.x);
+    S.side=cr>0?'derecha':'izquierda';S.target={x:b.x,y:b.y};beep(2);
+  }else S.target=pointAt(S.sR-2*S.ppm);
+  if(!S.offRoute&&S.sR<.8*S.ppm&&!S.arrived){S.arrived=true;beep(1,520);toast('Has llegado a la entrada')}
+  if(was!==S.offRoute||S.offRoute)ui();
+}
+let actx=null,lastBeep=0;
+function audioOn(){try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();actx.resume()}catch(e){}}
+function beep(n,f=1100){
+  if(!actx||performance.now()-lastBeep<900)return;lastBeep=performance.now();
+  for(let i=0;i<n;i++){const o=actx.createOscillator(),g=actx.createGain(),t=actx.currentTime+i*.18;
+    o.frequency.value=f;g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.4,t+.01);g.gain.exponentialRampToValueAtTime(.0001,t+.13);
+    o.connect(g).connect(actx.destination);o.start(t);o.stop(t+.14)}
 }
 function readHead(){
   $('rHead').textContent=S.pos&&S.mode!=='place'&&S.mode!=='aim'?Math.round(((S.th*180/Math.PI)%360+360)%360):'–';
@@ -340,6 +379,7 @@ function ui(){
   if(m==='run'){
     if(!S.started)t='';
     else if(!sensTried||(!gotM&&!S.sensors&&performance.now()-startT<1500))t='Comprobando sensores…';
+    else if(S.ret&&S.offRoute)t='<b>!</b>Te has desviado '+fmt(S.dev)+' m a la '+S.side+' del camino de ida. Gira hacia la flecha hasta que deje de pitar.';
     else if(!S.sensors)t=sensErr==='denied'?'Safari ha denegado el permiso de movimiento. Cierra esta pestaña, abre la página otra vez y pulsa Permitir cuando lo pida.'
       :'No llegan datos de los sensores de movimiento'+(sensErr?' ('+sensErr+')':'')+'. Pulsa Pausar y luego Reanudar para volver a pedir el permiso. Mientras, puedes usar Paso y Giro.';
     else if(!S.tracking)t='En pausa.';
@@ -363,7 +403,7 @@ function ui(){
 let startT=0,lock=null;
 $('bMain').onclick=()=>{
   const starting=S.mode==='ready'||(S.mode==='run'&&!S.tracking);
-  if(starting){enableSensors();startT=performance.now();setTimeout(ui,1600)}
+  if(starting){enableSensors();audioOn();startT=performance.now();setTimeout(ui,1600)}
   if(S.mode==='ready'){S.mode='run';S.started=true;S.tracking=true;off=null;follow=true;
     if(view.s*S.ppm<28)view.s=28/S.ppm;center();ui();
   }else if(S.mode==='run'){S.tracking=!S.tracking;off=null;ui()}
@@ -374,16 +414,17 @@ $('mS').onclick=()=>step();
 $('mL').onclick=()=>{S.th=wrap(S.th-Math.PI/12);readHead();dirty=true};
 $('mR').onclick=()=>{S.th=wrap(S.th+Math.PI/12);readHead();dirty=true};
 $('bRet').onclick=()=>{
-  if(!S.ret){S.ret=true;S.retIdx=S.trail.length-1;S.rtrail=[S.pos];S.target=retTarget()}
-  else{S.ret=false;S.trail=S.trail.concat(S.rtrail);S.rtrail=[];S.target=null}
+  audioOn();
+  if(!S.ret){buildCum();S.ret=true;S.sR=S.cum[S.cum.length-1];S.offRoute=false;S.arrived=false;S.rtrail=[S.pos];S.target=pointAt(S.sR-2*S.ppm)}
+  else{S.ret=false;S.offRoute=false;S.trail=S.trail.concat(S.rtrail.slice(1));S.rtrail=[];S.target=null}
   ui();
 };
 $('bFix').onclick=()=>{S.mode=S.mode==='fix'?'run':'fix';ui()};
 $('bLoop').onclick=()=>{
   measure('Cierre en la entrada',Math.hypot(S.entry.x-S.pos.x,S.entry.y-S.pos.y)/S.ppm);
-  S.pos={...S.entry};S.trail=[S.pos];S.rtrail=[];S.ret=false;S.target=null;S.steps=0;S.dist=0;off=null;center();ui();
+  S.pos={...S.entry};S.trail=[S.pos];S.rtrail=[];S.ret=false;S.offRoute=false;S.target=null;S.steps=0;S.dist=0;off=null;center();ui();
 };
-function reset(){Object.assign(S,{mode:'place',entry:null,pos:null,trail:[],rtrail:[],steps:0,dist:0,tracking:false,started:false,ret:false,target:null,cal:[]});off=null;fit();ui()}
+function reset(){Object.assign(S,{mode:'place',entry:null,pos:null,trail:[],rtrail:[],steps:0,dist:0,tracking:false,started:false,ret:false,offRoute:false,target:null,cal:[]});off=null;fit();ui()}
 $('bCfg').onclick=()=>{$('sheet').hidden=false;readHead()};$('bClose').onclick=()=>$('sheet').hidden=true;
 $('slM').onclick=()=>setStep(-.05);$('slP').onclick=()=>setStep(.05);
 function setStep(d){S.stepLen=Math.round(Math.max(.3,Math.min(1.1,S.stepLen+d))*100)/100;store.set('gps.step',S.stepLen);$('slO').textContent=fmt(S.stepLen,2)+' m'}
